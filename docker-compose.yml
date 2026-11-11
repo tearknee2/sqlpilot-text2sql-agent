@@ -1,0 +1,24 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: sqlpilot-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: sqlpilot_demo
+      MYSQL_ROOT_HOST: "%"
+      SQLPILOT_RO_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./data/init/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./data/init/02_readonly_user.sh:/docker-entrypoint-initdb.d/02_readonly_user.sh:ro
+      - ./data/init/03_decoy_tables.sql:/docker-entrypoint-initdb.d/03_decoy_tables.sql:ro
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -uroot -p$$MYSQL_ROOT_PASSWORD -e 'SELECT 1 FROM sqlpilot_demo.stores LIMIT 1' >/dev/null 2>&1"]
+      interval: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  mysql_data:

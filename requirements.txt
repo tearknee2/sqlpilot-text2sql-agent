@@ -1,0 +1,17 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.8
+pydantic-settings>=2.4
+openai>=1.40
+pymysql>=1.1
+dbutils>=3.1
+sqlglot>=25.0
+rank-bm25>=0.2.2
+PyYAML>=6.0
+httpx>=0.27
+pytest>=8.0
+pytest-asyncio>=0.24
+ruff>=0.6
+python-dotenv>=1.0
+streamlit>=1.38
+jieba>=0.42
