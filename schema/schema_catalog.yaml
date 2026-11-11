@@ -1,0 +1,352 @@
+version: 1
+database: sqlpilot_demo
+
+# ============================================================
+# 6 张业务表（G1 只给 top-k，G0 全给）
+# ============================================================
+tables:
+
+  orders:
+    description: 订单主表，一行是一个订单；金额口径为实付金额
+    row_count_hint: ~3000
+    columns:
+      order_id:     {type: BIGINT, desc: 订单唯一ID, pk: true}
+      store_id:     {type: INT, desc: 门店ID，关联 stores.store_id}
+      customer_id:  {type: INT, desc: 客户ID，关联 customers.customer_id}
+      order_date:   {type: DATE, desc: 下单日期，范围 2024-01-01~2024-12-31, example: "2024-06-01"}
+      status:       {type: VARCHAR, desc: 订单状态, enum: [paid, cancelled, refunded, pending],
+                     note: "历史数据中存在少量 'PAID ' 脏值，统计已支付时应考虑 LOWER(TRIM(status))"}
+      channel:      {type: VARCHAR, desc: 下单渠道, enum: [线下, 小程序, 第三方]}
+      amount:       {type: DECIMAL, desc: "订单实付金额；注意列名是 amount，不是 total_amount"}
+      created_at:   {type: DATETIME, desc: 创建时间}
+    join_paths:
+      - orders.store_id = stores.store_id
+      - orders.customer_id = customers.customer_id
+      - orders.order_id = order_items.order_id
+    pitfalls:
+      - "问『销售额/营业额』默认用 SUM(amount)，只统计已支付；历史数据含 'PAID ' 脏值，须用 LOWER(TRIM(status))='paid' 而非 status='paid'（口径唯一来源，prompt 不得另写一份）"
+      - "order_items 的金额需 qty*unit_price*(1-COALESCE(discount,0))，不要直接用 orders.amount 相加两次"
+
+  stores:
+    description: 门店维度表
+    row_count_hint: 8
+    columns:
+      store_id:   {type: INT, desc: 门店ID, pk: true}
+      store_name: {type: VARCHAR, desc: 门店名称}
+      city:       {type: VARCHAR, desc: 城市, enum: [上海, 北京, 深圳, 杭州]}
+      region:     {type: VARCHAR, desc: 大区, enum: [华东, 华北, 华南]}
+      open_date:  {type: DATE, desc: 开业日期}
+      status:     {type: VARCHAR, desc: 门店状态, enum: [active, closed]}
+    join_paths:
+      - stores.store_id = orders.store_id
+    pitfalls:
+      - "区域问题用 region；城市问题用 city；8 家门店中有 1 家 closed"
+
+  customers:
+    description: 客户维度表
+    row_count_hint: 300
+    columns:
+      customer_id:   {type: INT, desc: 客户ID, pk: true}
+      customer_name: {type: VARCHAR, desc: 客户姓名}
+      gender:        {type: VARCHAR, desc: "M / F / NULL 表示未填写", enum: [M, F],
+                      note: "约 5% 为 NULL"}
+      city:          {type: VARCHAR, desc: 所在城市}
+      member_level:  {type: VARCHAR, desc: 会员等级, enum: [普通, 银卡, 金卡]}
+      register_date: {type: DATE, desc: 注册日期}
+    join_paths:
+      - customers.customer_id = orders.customer_id
+    pitfalls:
+      - "存在 2 组同名不同 ID 的客户，按 customer_name GROUP BY 会重复计数；统计人数应用 customer_id"
+
+  products:
+    description: 商品维度表
+    row_count_hint: 120
+    columns:
+      product_id:   {type: INT, desc: 商品ID, pk: true}
+      product_name: {type: VARCHAR, desc: 商品名称}
+      category:     {type: VARCHAR, desc: 品类, enum: [数码, 家居, 食品, 服饰]}
+      brand:        {type: VARCHAR, desc: 品牌}
+      price:        {type: DECIMAL, desc: "当前售价，允许 NULL（历史商品未维护）", note: "3 条 price IS NULL"}
+      cost:         {type: DECIMAL, desc: 成本价}
+      is_active:    {type: TINYINT, desc: "是否在售，1=在售"}
+    join_paths:
+      - products.product_id = order_items.product_id
+    pitfalls:
+      - "price 有 3 条 NULL；做 AVG/SUM 前用 COALESCE(price, 0) 或显式过滤 price IS NOT NULL，并在答案中说明口径"
+
+  order_items:
+    description: 订单明细表，一行是一个订单里的一个商品
+    row_count_hint: ~9000
+    columns:
+      item_id:    {type: BIGINT, desc: 明细ID, pk: true}
+      order_id:   {type: BIGINT, desc: 订单ID，关联 orders.order_id}
+      product_id: {type: INT, desc: 商品ID，关联 products.product_id}
+      qty:        {type: INT, desc: 购买数量}
+      unit_price: {type: DECIMAL, desc: 单价}
+      discount:   {type: DECIMAL, desc: "折扣率 0~1，NULL 表示无折扣", note: "约 30% 为 NULL"}
+    join_paths:
+      - order_items.order_id = orders.order_id
+      - order_items.product_id = products.product_id
+    pitfalls:
+      - "金额 = qty * unit_price * (1 - COALESCE(discount, 0))；discount 为 NULL 表示无折扣，不能当作无效数据丢弃"
+      - "按商品统计销量用 SUM(order_items.qty)，不要用 COUNT(*)"
+
+  returns:
+    description: 退货记录表，一行是一次退货
+    row_count_hint: ~150
+    columns:
+      return_id:      {type: BIGINT, desc: 退货ID, pk: true}
+      order_id:       {type: BIGINT, desc: 订单ID，关联 orders.order_id}
+      product_id:     {type: INT, desc: 商品ID，关联 products.product_id}
+      return_date:    {type: DATE, desc: 退货日期}
+      reason:         {type: VARCHAR, desc: 退货原因, enum: [质量问题, 七天无理由, 错发, 其他]}
+      refund_amount:  {type: DECIMAL, desc: 退款金额}
+    join_paths:
+      - returns.order_id = orders.order_id
+    pitfalls:
+      - "退款总额用 SUM(refund_amount)，不要用 orders.amount；两者口径不同"
+
+# ============================================================
+# 24 张 decoy 表（G0 全给，G1 检索时不应命中）
+# 只给 description + columns，无 join_paths / pitfalls / row_count_hint
+# ============================================================
+
+  suppliers:
+    description: 供应商主表（占位，无数据）
+    columns:
+      supplier_id:   {type: INT, desc: 供应商ID, pk: true}
+      supplier_name: {type: VARCHAR, desc: 供应商名称}
+      contact_name:  {type: VARCHAR, desc: 联系人}
+      phone:         {type: VARCHAR, desc: 联系电话}
+      city:          {type: VARCHAR, desc: 所在城市}
+      rating:        {type: DECIMAL, desc: 评分}
+      created_at:    {type: DATETIME, desc: 创建时间}
+
+  warehouses:
+    description: 仓库主表（占位，无数据）
+    columns:
+      warehouse_id:   {type: INT, desc: 仓库ID, pk: true}
+      warehouse_name: {type: VARCHAR, desc: 仓库名称}
+      city:           {type: VARCHAR, desc: 所在城市}
+      capacity:       {type: INT, desc: 容量}
+      manager_name:   {type: VARCHAR, desc: 负责人}
+      opened_at:      {type: DATE, desc: 开仓日期}
+
+  coupons:
+    description: 优惠券（占位，无数据）
+    columns:
+      coupon_id:      {type: INT, desc: 优惠券ID, pk: true}
+      code:           {type: VARCHAR, desc: 券码}
+      discount_type:  {type: VARCHAR, desc: 折扣类型, enum: [fixed, percent]}
+      discount_value: {type: DECIMAL, desc: 折扣值}
+      valid_from:     {type: DATE, desc: 生效日期}
+      valid_to:       {type: DATE, desc: 失效日期}
+      max_uses:       {type: INT, desc: 最大使用次数}
+
+  shipments:
+    description: 发货单（占位，无数据）
+    columns:
+      shipment_id:  {type: BIGINT, desc: 发货单ID, pk: true}
+      order_id:     {type: BIGINT, desc: 订单ID}
+      warehouse_id: {type: INT, desc: 仓库ID}
+      shipped_at:   {type: DATETIME, desc: 发货时间}
+      arrived_at:   {type: DATETIME, desc: 到货时间}
+      carrier:      {type: VARCHAR, desc: 承运商}
+      tracking_no:  {type: VARCHAR, desc: 运单号}
+
+  inventory:
+    description: 库存（占位，无数据）
+    columns:
+      inventory_id: {type: BIGINT, desc: 库存记录ID, pk: true}
+      warehouse_id: {type: INT, desc: 仓库ID}
+      product_id:   {type: INT, desc: 商品ID}
+      stock_qty:    {type: INT, desc: 现有库存}
+      safety_stock: {type: INT, desc: 安全库存}
+      updated_at:   {type: DATETIME, desc: 更新时间}
+
+  brands:
+    description: 品牌（占位，无数据）
+    columns:
+      brand_id:     {type: INT, desc: 品牌ID, pk: true}
+      brand_name:   {type: VARCHAR, desc: 品牌名称}
+      country:      {type: VARCHAR, desc: 品牌所属国家}
+      founded_year: {type: INT, desc: 成立年份}
+      is_active:    {type: TINYINT, desc: 是否启用}
+
+  categories:
+    description: 品类主表（占位，无数据）
+    columns:
+      category_id:   {type: INT, desc: 品类ID, pk: true}
+      category_name: {type: VARCHAR, desc: 品类名称}
+      parent_id:     {type: INT, desc: 父品类ID}
+      level:         {type: TINYINT, desc: 层级}
+      sort_order:    {type: INT, desc: 排序序号}
+
+  promotions:
+    description: 促销活动（占位，无数据）
+    columns:
+      promotion_id:   {type: INT, desc: 促销ID, pk: true}
+      promotion_name: {type: VARCHAR, desc: 促销名称}
+      start_date:     {type: DATE, desc: 开始日期}
+      end_date:       {type: DATE, desc: 结束日期}
+      discount_rate:  {type: DECIMAL, desc: 折扣率}
+      status:         {type: VARCHAR, desc: 活动状态, enum: [draft, active, ended]}
+
+  reviews:
+    description: 商品评价（占位，无数据）
+    columns:
+      review_id:    {type: BIGINT, desc: 评价ID, pk: true}
+      order_id:     {type: BIGINT, desc: 订单ID}
+      product_id:   {type: INT, desc: 商品ID}
+      rating:       {type: TINYINT, desc: 评分 1-5}
+      content:      {type: TEXT, desc: 评价内容}
+      reviewed_at:  {type: DATETIME, desc: 评价时间}
+      is_anonymous: {type: TINYINT, desc: 是否匿名}
+
+  members:
+    description: 会员卡（占位，无数据）
+    columns:
+      member_id:   {type: INT, desc: 会员卡ID, pk: true}
+      customer_id: {type: INT, desc: 客户ID}
+      card_no:     {type: VARCHAR, desc: 卡号}
+      level:       {type: VARCHAR, desc: 等级, enum: [普通, 银卡, 金卡, 钻石]}
+      points:      {type: INT, desc: 积分}
+      joined_at:   {type: DATE, desc: 加入日期}
+
+  addresses:
+    description: 客户地址（占位，无数据）
+    columns:
+      address_id:  {type: INT, desc: 地址ID, pk: true}
+      customer_id: {type: INT, desc: 客户ID}
+      province:    {type: VARCHAR, desc: 省份}
+      city:        {type: VARCHAR, desc: 城市}
+      detail:      {type: VARCHAR, desc: 详细地址}
+      is_default:  {type: TINYINT, desc: 是否默认}
+
+  payments:
+    description: 支付流水（占位，无数据；注意与 orders.amount 区分）
+    columns:
+      payment_id: {type: BIGINT, desc: 支付ID, pk: true}
+      order_id:   {type: BIGINT, desc: 订单ID}
+      method:     {type: VARCHAR, desc: 支付方式, enum: [alipay, wechat, card, cash]}
+      amount:     {type: DECIMAL, desc: 支付金额}
+      status:     {type: VARCHAR, desc: 支付状态, enum: [pending, success, failed, refunded]}
+      paid_at:    {type: DATETIME, desc: 支付时间}
+      channel:    {type: VARCHAR, desc: 支付渠道}
+
+  invoices:
+    description: 发票（占位，无数据）
+    columns:
+      invoice_id: {type: BIGINT, desc: 发票ID, pk: true}
+      order_id:   {type: BIGINT, desc: 订单ID}
+      invoice_no: {type: VARCHAR, desc: 发票号码}
+      title:      {type: VARCHAR, desc: 抬头}
+      tax_no:     {type: VARCHAR, desc: 税号}
+      issued_at:  {type: DATETIME, desc: 开具时间}
+
+  refunds:
+    description: 退款申请（占位，无数据；注意与 returns 区分）
+    columns:
+      refund_id:    {type: BIGINT, desc: 退款ID, pk: true}
+      order_id:     {type: BIGINT, desc: 订单ID}
+      amount:       {type: DECIMAL, desc: 退款金额}
+      reason:       {type: VARCHAR, desc: 退款原因}
+      status:       {type: VARCHAR, desc: 退款状态, enum: [pending, approved, rejected]}
+      requested_at: {type: DATETIME, desc: 申请时间}
+
+  employees:
+    description: 员工（占位，无数据）
+    columns:
+      employee_id:   {type: INT, desc: 员工ID, pk: true}
+      employee_name: {type: VARCHAR, desc: 姓名}
+      store_id:      {type: INT, desc: 门店ID}
+      position:      {type: VARCHAR, desc: 岗位}
+      hire_date:     {type: DATE, desc: 入职日期}
+      salary:        {type: DECIMAL, desc: 薪资}
+      status:        {type: VARCHAR, desc: 在职状态, enum: [active, left]}
+
+  departments:
+    description: 部门（占位，无数据）
+    columns:
+      dept_id:    {type: INT, desc: 部门ID, pk: true}
+      dept_name:  {type: VARCHAR, desc: 部门名称}
+      manager_id: {type: INT, desc: 负责人ID}
+      headcount:  {type: INT, desc: 编制人数}
+      budget:     {type: DECIMAL, desc: 预算}
+
+  campaigns:
+    description: 营销活动（占位，无数据）
+    columns:
+      campaign_id:   {type: INT, desc: 活动ID, pk: true}
+      campaign_name: {type: VARCHAR, desc: 活动名称}
+      channel:       {type: VARCHAR, desc: 投放渠道}
+      budget:        {type: DECIMAL, desc: 预算}
+      start_date:    {type: DATE, desc: 开始日期}
+      end_date:      {type: DATE, desc: 结束日期}
+
+  logistics:
+    description: 物流轨迹（占位，无数据）
+    columns:
+      logistics_id: {type: BIGINT, desc: 轨迹ID, pk: true}
+      shipment_id:  {type: BIGINT, desc: 发货单ID}
+      status:       {type: VARCHAR, desc: 物流状态}
+      location:     {type: VARCHAR, desc: 所在位置}
+      event_at:     {type: DATETIME, desc: 事件时间}
+      operator:     {type: VARCHAR, desc: 操作人}
+
+  carriers:
+    description: 承运商（占位，无数据）
+    columns:
+      carrier_id:    {type: INT, desc: 承运商ID, pk: true}
+      carrier_name:  {type: VARCHAR, desc: 承运商名称}
+      contact_phone: {type: VARCHAR, desc: 联系电话}
+      service_level: {type: VARCHAR, desc: 服务等级, enum: [standard, express]}
+      is_active:     {type: TINYINT, desc: 是否启用}
+
+  pricing_rules:
+    description: 定价规则（占位，无数据）
+    columns:
+      rule_id:        {type: INT, desc: 规则ID, pk: true}
+      product_id:     {type: INT, desc: 商品ID}
+      rule_type:      {type: VARCHAR, desc: 规则类型}
+      discount_rate:  {type: DECIMAL, desc: 折扣率}
+      effective_from: {type: DATE, desc: 生效日期}
+      effective_to:   {type: DATE, desc: 失效日期}
+
+  tax_rates:
+    description: 税率（占位，无数据）
+    columns:
+      tax_id:         {type: INT, desc: 税率ID, pk: true}
+      region:         {type: VARCHAR, desc: 地区}
+      category:       {type: VARCHAR, desc: 品类}
+      rate:           {type: DECIMAL, desc: 税率}
+      effective_from: {type: DATE, desc: 生效日期}
+
+  regions:
+    description: 大区主表（占位，无数据；注意与 stores.region 区分）
+    columns:
+      region_id:   {type: INT, desc: 大区ID, pk: true}
+      region_name: {type: VARCHAR, desc: 大区名称}
+      manager:     {type: VARCHAR, desc: 负责人}
+      store_count: {type: INT, desc: 门店数}
+      created_at:  {type: DATETIME, desc: 创建时间}
+
+  feedback:
+    description: 客户反馈（占位，无数据）
+    columns:
+      feedback_id:  {type: BIGINT, desc: 反馈ID, pk: true}
+      customer_id:  {type: INT, desc: 客户ID}
+      type:         {type: VARCHAR, desc: 反馈类型, enum: [complaint, suggestion, inquiry]}
+      content:      {type: TEXT, desc: 反馈内容}
+      submitted_at: {type: DATETIME, desc: 提交时间}
+      status:       {type: VARCHAR, desc: 处理状态, enum: [open, closed]}
+
+  notifications:
+    description: 通知（占位，无数据）
+    columns:
+      notification_id: {type: BIGINT, desc: 通知ID, pk: true}
+      customer_id:     {type: INT, desc: 客户ID}
+      channel:         {type: VARCHAR, desc: 通知渠道, enum: [sms, email, push]}
+      title:           {type: VARCHAR, desc: 标题}
+      content:         {type: TEXT, desc: 内容}
+      sent_at:         {type: DATETIME, desc: 发送时间}
