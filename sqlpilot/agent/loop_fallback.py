@@ -46,6 +46,10 @@ def _init_state(question: str) -> AgentState:
         "final_status": "failed",
         "answer": None,
         "failure_reason": None,
+        "passed": False,
+        "blocked": False,
+        "budget_ok": False,
+        "normalized_sql": None,
     }
 
 

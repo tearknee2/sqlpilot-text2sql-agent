@@ -28,3 +28,8 @@ class AgentState(TypedDict, total=False):
     final_status: Literal["success", "refused", "failed"]
     answer: str | None
     failure_reason: str | None
+    # LangGraph routing fields (set by validate_sql / check_budget nodes)
+    passed: bool
+    blocked: bool
+    budget_ok: bool
+    normalized_sql: str | None
