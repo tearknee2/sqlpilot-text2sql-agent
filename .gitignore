@@ -21,3 +21,8 @@ data/traces/
 # 系统
 .DS_Store
 Thumbs.db
+
+.acl-recovery
+ds_note/
+AGENTS.md
+SQLPilot-开发文档.md

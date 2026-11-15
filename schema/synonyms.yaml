@@ -1,0 +1,38 @@
+version: v1
+# Business synonym -> table hints. Used by SchemaRetriever for scoring.
+# Versioned so eval reports can pin SYNONYM_VERSION (doc §4.5 control variable).
+# ONLY business terms go here. Out-of-scope words (供应商) must NOT be listed.
+
+synonyms:
+  # 销售额 / 收入类 -> orders
+  销售额: [orders]
+  营业额: [orders]
+  收入: [orders]
+  订单额: [orders]
+  订单: [orders]
+  已支付: [orders]
+  付款: [orders]
+
+  # 门店 / 地区类 -> stores
+  门店: [stores]
+  店铺: [stores]
+  大区: [stores]
+  城市: [stores, customers]
+
+  # 客户类 -> customers
+  客户: [customers]
+  会员: [customers]
+
+  # 商品类 -> products
+  商品: [products]
+  产品: [products]
+  品类: [products]
+  品牌: [products]
+
+  # 退货类 -> returns
+  退货: [returns]
+  退款: [returns]
+
+  # 明细类 -> order_items
+  明细: [order_items]
+  折扣: [order_items]

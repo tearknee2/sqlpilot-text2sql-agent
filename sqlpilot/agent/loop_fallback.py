@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 import uuid
 from typing import Any
+from sqlpilot.config import Settings
 
 from sqlpilot.agent.errors import TERMINAL_KINDS, needs_relink as _needs_relink
 from sqlpilot.agent.prompts import (
@@ -53,7 +54,7 @@ def _init_state(question: str) -> AgentState:
     }
 
 
-def _budget_ok(state: AgentState, s) -> bool:
+def _budget_ok(state: AgentState, s: "Settings") -> bool:
     u = state["usage"]
     return (
         state["retry_count"] < s.agent_max_retries
