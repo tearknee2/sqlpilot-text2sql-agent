@@ -25,7 +25,7 @@ c = EvalCase(
         "select s.city, count(*) as order_count "
         "from orders o join stores s "
         "on o.store_id = s.store_id "
-        "where (o.status) = 'paid' "
+        "where lower(trim(o.status)) = 'paid' "
         "group by s.city"
     ),
     expect="result",

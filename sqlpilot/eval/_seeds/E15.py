@@ -21,7 +21,6 @@ c = EvalCase(
         "    GROUP BY o2.store_id"
         "  ) t"
         ") "
-        "ORDER BY sales DESC"
     ),
     expect="result",
     tolerance=0.01,
