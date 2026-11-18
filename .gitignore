@@ -26,3 +26,5 @@ Thumbs.db
 ds_note/
 AGENTS.md
 SQLPilot-开发文档.md
+
+sqlpilot/eval/_seeds/tmp_*.py
