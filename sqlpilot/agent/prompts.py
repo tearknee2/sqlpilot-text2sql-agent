@@ -59,3 +59,21 @@ def summarize_user(question: str, sql: str, result: dict | None, empty: bool = F
         if result.get("truncated"):
             table_text += "\n（结果已截断，仅前 200 行）"
     return f"<question>{question}</question>\n<sql>{sql}</sql>\n<result>\n{table_text}\n</result>"
+
+EVAL_EXPAND_SYSTEM = """你在为一个连锁零售 MySQL 库生成 Text2SQL 评测题。
+给定 schema 摘要和若干种子题，按指定 layer 生成新题。
+
+严格规则：
+1. 问题表述必须无歧义，用中文
+2. SQL 只能使用 schema 中出现的表和列
+3. SQL 必须是 SELECT（不能有 DDL/DML）
+4. SQL 执行结果必须非空（除非题目本身是"不可回答"）
+5. 与种子题不重复（可以同义改写但换实体/换条件）
+6. 只输出 json 数组，不要 markdown 代码块
+
+输出格式：
+[
+  {"question": "...", "sql": "...", "difficulty": "easy|medium|hard", "rationale": "考察什么"}
+]
+
+注意：你生成的 SQL 只是候选，会由人工逐题执行校验。不确定的地方请在 rationale 中标注。"""
