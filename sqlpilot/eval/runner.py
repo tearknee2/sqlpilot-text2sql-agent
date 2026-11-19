@@ -9,7 +9,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+import hashlib
 
+from datetime import datetime
 from sqlpilot.eval.models import EvalCase
 from sqlpilot.tools.executor import MySqlExecutor
 
@@ -78,6 +80,79 @@ def cmd_validate(args) -> int:
         return 1
     print(f"✅ 全部 {len(cases)} 道题通过校验")
     return 0
+
+def write_report(results, cases, args, out_path: Path) -> None:
+    """生成 markdown 评测报告（doc §4.5）。D7 只填 G2 单组，G0/G1 留占位。"""
+    # 1) 数据集 sha256（冻结指纹）
+    sha = hashlib.sha256(V1_PATH.read_bytes()).hexdigest()
+
+    total = len(results)
+    passed_count = sum(1 for r in results if r["passed"])
+    accuracy = passed_count / total if total else 0.0
+    one_case_pp = 100.0 / total if total else 0.0   # 小样本声明：1 题 ≈ ?pp
+
+    # 2) 逐题矩阵
+    matrix_rows = []
+    for r, c in zip(results, cases):
+        icon = "✅" if r["passed"] else "❌"
+        matrix_rows.append(
+            f"| {r['id']} | {c.layer} | {c.difficulty} | {icon} | {r['reason']} |"
+        )
+    matrix = "\n".join(matrix_rows)
+
+    # 3) model 从 settings 拿
+    from sqlpilot.config import get_settings
+    s = get_settings()
+    model_name = s.llm_model          # 提示：Settings 里哪个字段是模型名？
+
+    # 4) 拼 markdown
+    md = f"""# SQLPilot 评测报告
+
+> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+> split：`{args.split}`
+> model：`{model_name}` ／ PROMPT_VERSION：`v2.0` ／ dataset_sha256：`{sha[:16]}...`
+> **小样本声明**：当前 {total} 道可评分题（目标 24，D8 补齐）；1 题 ≈ {one_case_pp:.1f}pp；不做显著性检验，结论以逐题矩阵为准。
+
+## 一、执行准确率
+
+| 指标 | 值 |
+|---|---|
+| passed / total | {passed_count}/{total} |
+| accuracy | {accuracy:.1%} |
+
+## 二、逐题矩阵（{args.split}）
+
+| ID | layer | difficulty | passed | reason |
+|---|---|---|---|---|
+{matrix}
+
+## 三、G0/G1 消融（D11 填充）
+
+| 组 | 执行准确率 | 说明 |
+|---|---|---|
+| G0 Full-Schema | ⬜ 待填 | D11（全量表，无检索） |
+| G1 +SchemaLink | ⬜ 待填 | D11（top-k，无纠错） |
+| **G2 Full** | **{passed_count}/{total}** | **当前**（top-k + 纠错） |
+
+## 四、翻转清单（D11 填）
+
+⬜ 待填（需要 G0/G1/G2 三组数据对比）
+
+## 五、压力集（D8 建 + D11 跑）
+
+⬜ 待填（12 道压力题）
+
+## 六、拒答 / 安全指标
+
+⬜ 待填（当前 dev/heldout 无 refuse/blocked 题；D8 补完 24 道后统计）
+
+## 七、badcase 汇总
+
+（见逐题矩阵中 ❌ 的行；D11 做详细归因）
+"""
+    out_path.write_text(md, encoding="utf-8")
+    print(f"\n📄 报告已写入 {out_path}")
+
 
 def cmd_run(args) -> int:
     """跑评测：强制 --split，逐题跑 agent + 判等，统计准确率。"""
@@ -150,6 +225,10 @@ def cmd_run(args) -> int:
     accuracy = passed_count / total     # 准确率公式
     print(f"\n=== 汇总 ===")
     print(f"passed: {passed_count}/{total}  accuracy: {accuracy:.1%}")
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        write_report(results, cases, args, out_path)
     return 0 if passed_count == total else 1
 
 
@@ -163,6 +242,7 @@ def main() -> int:
     p_run = sub.add_parser("run", help="跑评测")
     p_run.add_argument("--split", choices=["dev", "heldout"], required=False)
     p_run.add_argument("--limit", type=int, default=0)
+    p_run.add_argument("--out", default=None, help="报告输出路径（如 eval/report.md）")
     p_run.set_defaults(func=cmd_run)
 
     args = parser.parse_args()

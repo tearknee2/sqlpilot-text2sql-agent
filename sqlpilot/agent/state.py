@@ -29,6 +29,7 @@ class AgentState(TypedDict, total=False):
     answer: str | None
     failure_reason: str | None
     # LangGraph routing fields (set by validate_sql / check_budget nodes)
+    # （下面是专门给langraph路由用的4个开关）
     passed: bool
     blocked: bool
     budget_ok: bool
