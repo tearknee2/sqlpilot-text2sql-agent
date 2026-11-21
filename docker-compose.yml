@@ -1,4 +1,5 @@
 services:
+  # ============ 1. 数据库 ============
   mysql:
     image: mysql:8.0
     container_name: sqlpilot-mysql
@@ -19,6 +20,57 @@ services:
       interval: 5s
       retries: 20
       start_period: 30s
+
+  # ============ 2. 一次性灌数据（跑完就退出）============
+  seed:
+    build: .
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: sqlpilot_demo
+      SEED_MYSQL_USER: ${SEED_MYSQL_USER}
+      SEED_MYSQL_PASSWORD: ${SEED_MYSQL_PASSWORD}
+    command: ["python", "-m", "data.seed"]
+    restart: "no"
+
+  # ============ 3. 后端 FastAPI ============
+  app:
+    build: .
+    container_name: sqlpilot-app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: sqlpilot_demo
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL}
+      DEMO_OFFLINE_MODE: ${DEMO_OFFLINE_MODE:-false}
+    ports:
+      - "8000:8000"
+
+  # ============ 4. 前端 Streamlit ============
+  web:
+    build: .
+    container_name: sqlpilot-web
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      SQLPILOT_API_URL: http://app:8000
+    ports:
+      - "8501:8501"
+    command: ["streamlit", "run", "web/streamlit_app.py",
+              "--server.address", "0.0.0.0", "--server.port", "8501"]
 
 volumes:
   mysql_data:

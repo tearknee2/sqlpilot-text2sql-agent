@@ -1,0 +1,21 @@
+# 不要进镜像的东西
+.env
+.env.*
+.git
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+.idea/
+.vscode/
+data/traces/
+ds_note/
+notes/
+tests/
+*.md
+Dockerfile
+.dockerignore
+.acl-recovery
+
+.ruff_cache/
+.venv/

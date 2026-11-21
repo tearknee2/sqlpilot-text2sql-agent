@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) 把仓库代码拉到 CI 机器上
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2) 装 Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 3) 装依赖（用国内镜像加速）
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+          pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
+          pip install -r requirements.txt
+
+      # 4) Lint：代码风格/低级错误检查
+      - name: Lint (ruff)
+        run: ruff check . || echo "lint warnings (non-blocking)"
+
+      # 5) 单元测试（不连真数据库的那些）
+      - name: Pytest
+        run: pytest -q tests/ --ignore=tests/test_api.py 2>&1 | tail -30
+
+      # 6) 评测集校验（validate 需要连数据库，CI 里跳过或用 fake）
+      #   注意：validate 会连 MySQL，纯 ubuntu-latest 上没有 MySQL，所以默认不跑。
+      #   仅做 import/语法级校验示例：
+      - name: Validate dataset structure (no DB)
+        run: python -c "from sqlpilot.eval.runner import load_cases, V1_PATH; cases=load_cases(V1_PATH); print(f'loaded {len(cases)} cases'); assert len(cases) >= 20"
