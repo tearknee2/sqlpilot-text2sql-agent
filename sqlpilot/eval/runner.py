@@ -12,12 +12,20 @@ from pathlib import Path
 import hashlib
 
 from datetime import datetime
+
+from sqlpilot.config import get_settings
 from sqlpilot.eval.models import EvalCase
 from sqlpilot.tools.executor import MySqlExecutor
 
 DATASET_DIR = Path(__file__).resolve().parent / "dataset"
 V1_PATH = DATASET_DIR / "v1.jsonl"
 
+class FakeFullRetriever:
+    """G0 消融用：不做检索，永远返回全量表。"""
+    def __init__(self, catalog):
+        self.catalog = catalog
+    def retrieve(self, question: str, k: int | None = None) -> list[str]:
+        return sorted(self.catalog.allowed_tables)
 
 def load_cases(path: Path) -> list[EvalCase]:
     """读 JSONL，每行构造 EvalCase。"""
@@ -82,7 +90,52 @@ def cmd_validate(args) -> int:
     return 0
 
 def write_report(results, cases, args, out_path: Path) -> None:
-    """生成 markdown 评测报告（doc §4.5）。D7 只填 G2 单组，G0/G1 留占位。"""
+    """生成 markdown 评测报告（doc §4.5）。"""
+    # ===== 压力集报告分支 =====
+    if args.stress:
+        total = len(results)
+        triggered_count = sum(1 for r in results if r["triggered"])
+        trigger_rate = triggered_count / total if total else 0.0
+        # 挽回率：触发纠错且最终 success 的题数 / 触发纠错的题数
+        rescued_count = sum(1 for r in results if r["triggered"] and r["final_status"] == "success")
+        rescue_rate = (rescued_count / triggered_count) if triggered_count else None
+        rescue_str = f"{rescue_rate:.1%}" if rescue_rate is not None else "N/A"
+        rows = "\n".join(
+            f"| {r.get('run', 1)} | {r['id']} | {'✅' if r['triggered'] else '❌'} | {r['retry_count']} | {r['final_status']} |"
+            for r in results
+        )
+        md = f"""# SQLPilot 压力集报告
+
+> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+> 模式：压力集（--stress）／ 重复轮数：{args.runs}／ group：`{args.group}`
+
+## 一、纠错触发率与挽回率
+
+| 指标 | 值 |
+|---|---|
+| 触发纠错题数 / 总题数 | {triggered_count}/{total} |
+| 触发率 | {trigger_rate:.1%} |
+| 挽回题数 / 触发题数 | {rescued_count}/{triggered_count} |
+| 挽回率 | {rescue_str} |
+
+> 触发 = 该题在本轮 `retry_count > 0`（模型首次生成 SQL 被判失败并重试）。
+> 挽回率 = 触发纠错且最终 status==success 的比例（纠错把错 SQL 救回来的比例）。
+
+## 二、逐题触发矩阵
+
+| Run | ID | 触发纠错 | retry_count | final_status |
+|---|---|---|---|---|
+{rows}
+
+## 三、说明
+
+压力集不含 gt_sql，不判对错，只验证"能否触发自纠错"。
+"""
+        out_path.write_text(md, encoding="utf-8")
+        print(f"\n📄 压力集报告已写入 {out_path}")
+        return
+
+    # ===== 以下为主集原逻辑，不动 =====
     # 1) 数据集 sha256（冻结指纹）
     sha = hashlib.sha256(V1_PATH.read_bytes()).hexdigest()
 
@@ -110,7 +163,7 @@ def write_report(results, cases, args, out_path: Path) -> None:
 
 > 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 > split：`{args.split}`
-> model：`{model_name}` ／ PROMPT_VERSION：`v2.0` ／ dataset_sha256：`{sha[:16]}...`
+> model：`{model_name}` ／ PROMPT_VERSION：`v2.0-final` ／ dataset_sha256：`{sha[:16]}...`
 > **小样本声明**：当前 {total} 道可评分题（目标 24，D8 补齐）；1 题 ≈ {one_case_pp:.1f}pp；不做显著性检验，结论以逐题矩阵为准。
 
 ## 一、执行准确率
@@ -157,19 +210,23 @@ def write_report(results, cases, args, out_path: Path) -> None:
 def cmd_run(args) -> int:
     """跑评测：强制 --split，逐题跑 agent + 判等，统计准确率。"""
     # Step 1: 强制 --split（D7 DoD）
-    if not args.split:
-        print("❌ run 必须带 --split dev 或 --split heldout")
+    if not args.stress and not args.split:
+        print("❌ 非压力集必须带 --split dev 或 --split heldout")
         return 1
 
     # Step 2: 读题 + 过滤 split
-    all_cases = load_cases(V1_PATH)
-    cases = [c for c in all_cases if c.split == args.split]
+    if args.stress:
+        stress_path = DATASET_DIR / "stress_v1.jsonl"  # 压力集路径
+        all_cases = load_cases(stress_path)  # 压力集无 gt_sql
+        cases = all_cases
+    else:
+        all_cases = load_cases(V1_PATH)
+        cases = [c for c in all_cases if c.split == args.split]
+
     if args.limit:
         cases = cases[: args.limit]
-
     if not cases:
-        print(f"❌ split={args.split} 下没有题")
-        return 1
+        print("❌ 没有题目"); return 1
 
     print(f"split={args.split}  limit={args.limit or '∞'}  共 {len(cases)} 道题")
 
@@ -177,60 +234,101 @@ def cmd_run(args) -> int:
     from sqlpilot.agent.graph import QueryGraph
     from sqlpilot.llm.client import LLMClient
     from sqlpilot.eval.compare import compare
-
     llm = LLMClient()
-    graph = QueryGraph(llm=llm)
+
+    from sqlpilot.schema.catalog import get_catalog
+
+    if args.group == "G0":
+        # G0：全量表 → 注入假 retriever
+        graph = QueryGraph(llm=llm, retriever=FakeFullRetriever(get_catalog()))
+    elif args.group == "G1":
+        # G1：无纠错 → 独立 settings 副本，max_retries=0
+        s_copy = get_settings().model_copy(update={"agent_max_retries": 0})
+        graph = QueryGraph(llm=llm, settings=s_copy)
+    else:
+        # G2：完整版
+        graph = QueryGraph(llm=llm)
+
+
     ex = MySqlExecutor()
 
     # Step 4: 逐题跑
     results = []
-    for c in cases:
-        print(f"\n--- {c.id} | {c.question[:40]} ---")
-        agent_out = graph.run(c.question)
-        pred_sql = (agent_out.get("sql") or "").strip()
-        final_status = agent_out["final_status"]
-        failure_reason = agent_out.get("failure_reason")
-        print(f"  final_status: {final_status}")
-        print(f"  pred_sql: {pred_sql or '(空)'}")
-        print(f"  gt_sql:   {c.gt_sql or '(无)'}")
+    runs = args.runs if args.stress else 1        # 主集跑1遍，压力集跑args.runs遍
 
-        # Step 4a: 按 expect 判对错
-        if c.expect == "result":
-            if not pred_sql:
-                passed, reason = False, "no_sql"
-            else:
-                pred_result = ex.execute(pred_sql)
-                if pred_result["error"]:
-                    passed, reason = False, f"pred_sql_error:{pred_result['error']['kind']}"
+    for run_idx in range(runs):
+        if args.stress:
+            print(f"\n===== 压力集 第 {run_idx+1}/{runs} 轮 =====")
+        for c in cases:
+            print(f"\n--- {c.id} | {c.question[:40]} ---")
+            agent_out = graph.run(c.question)
+            pred_sql = (agent_out.get("sql") or "").strip()
+            final_status = agent_out["final_status"]
+            failure_reason = agent_out.get("failure_reason")
+            retry_count = agent_out.get("retry_count", 0)
+            print(f"  final_status: {final_status}  retry_count: {retry_count}")
+            print(f"  pred_sql: {pred_sql or '(空)'}")
+
+            # ===== 压力集：不判对错，只判"是否触发纠错(retry_count>0)" =====
+            if args.stress:
+                triggered = retry_count > 0
+                results.append({"id": c.id, "retry_count": retry_count,
+                                "final_status": final_status, "triggered": triggered,
+                                "run": run_idx + 1})
+                print(f"  triggered(纠错是否触发): {triggered}")
+                continue
+
+            # ===== 主集：原来的判分逻辑（result / refuse / blocked）=====
+            print(f"  gt_sql:   {c.gt_sql or '(无)'}")
+            if c.expect == "result":
+                if not pred_sql:
+                    passed, reason = False, "no_sql"
                 else:
-                    gt_result = ex.execute(c.gt_sql)
-                    passed, reason = compare(pred_result, gt_result, c.gt_sql, c.tolerance, c.ignore_column_order)    # 调 compare
+                    pred_result = ex.execute(pred_sql)
+                    if pred_result["error"]:
+                        passed, reason = False, f"pred_sql_error:{pred_result['error']['kind']}"
+                    else:
+                        gt_result = ex.execute(c.gt_sql)
+                        passed, reason = compare(pred_result, gt_result, c.gt_sql, c.tolerance, c.ignore_column_order)
+            elif c.expect == "refuse":
+                passed = final_status == "refused" and not pred_sql
+                reason = "refuse_ok" if passed else f"expected_refuse_got_{final_status}"
+            else:  # blocked
+                passed = final_status == "refused" and failure_reason == "SQL_BLOCKED"
+                reason = "blocked_ok" if passed else f"expected_blocked_got_{failure_reason}"
 
-        elif c.expect == "refuse":
-            # 必须 final_status=refused 且 sql 为空
-            passed = final_status=="refused" and not pred_sql
-            reason = "refuse_ok" if passed else f"expected_refuse_got_{final_status}_sql_len_{len(pred_sql)}"
-
-        else:  # blocked
-            # 必须 final_status=refused 且 failure_reason=SQL_BLOCKED
-            passed = final_status=="refused" and failure_reason == "SQL_BLOCKED"
-            reason = "blocked_ok" if passed else f"expected_blocked_got_{failure_reason}"
-
-        print(f"  passed: {passed}  reason: {reason}")
-        results.append({"id": c.id, "passed": passed, "reason": reason})
+            print(f"  passed: {passed}  reason: {reason}")
+            results.append({"id": c.id, "passed": passed, "reason": reason})
 
     # Step 5: 汇总
     total = len(results)
-    passed_count = sum(1 for r in results if r["passed"])
-    accuracy = passed_count / total     # 准确率公式
-    print(f"\n=== 汇总 ===")
-    print(f"passed: {passed_count}/{total}  accuracy: {accuracy:.1%}")
-    if args.out:
-        out_path = Path(args.out)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        write_report(results, cases, args, out_path)
-    return 0 if passed_count == total else 1
 
+    if args.stress:
+        # ===== 压力集：统计"触发率"（retry_count>0 的题数）=====
+        triggered_count = sum(1 for r in results if r["triggered"])
+        trigger_rate = triggered_count / total if total else 0.0
+        print(f"\n=== 压力集汇总 ===")
+        print(f"总题数: {total}  触发纠错的题数: {triggered_count}  触发率: {trigger_rate:.1%}")
+        print("逐题 trigger 情况:")
+        for r in results:
+            mark = "✅触发" if r["triggered"] else "❌未触发"
+            print(f"  {r['id']}: {mark}  retry_count={r['retry_count']}  status={r['final_status']}")
+        if args.out:
+            out_path = Path(args.out)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            write_report(results, cases, args, out_path)
+        return 0
+    else:
+        # ===== 主集：原逻辑 =====
+        passed_count = sum(1 for r in results if r["passed"])
+        accuracy = passed_count / total     # 准确率公式
+        print(f"\n=== 汇总 ===")
+        print(f"passed: {passed_count}/{total}  accuracy: {accuracy:.1%}")
+        if args.out:
+            out_path = Path(args.out)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            write_report(results, cases, args, out_path)
+        return 0 if passed_count == total else 1
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="sqlpilot.eval")
@@ -243,6 +341,10 @@ def main() -> int:
     p_run.add_argument("--split", choices=["dev", "heldout"], required=False)
     p_run.add_argument("--limit", type=int, default=0)
     p_run.add_argument("--out", default=None, help="报告输出路径（如 eval/report.md）")
+    p_run.add_argument("--group", choices=["G0", "G1", "G2"], default="G2")
+    p_run.add_argument("--stress", action="store_true", help="跑压力集 stress_v1.jsonl")
+    p_run.add_argument("--runs", type=int, default=1, help="重复跑几次（压力集用 2）")
+
     p_run.set_defaults(func=cmd_run)
 
     args = parser.parse_args()
