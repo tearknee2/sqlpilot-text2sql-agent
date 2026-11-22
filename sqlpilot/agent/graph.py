@@ -234,6 +234,11 @@ class QueryGraph:
 
     def run(self, question: str) -> dict[str, Any]:
         state = _init_state(question)
+        # 修复：LLMClient 的 usage 累计器跨 run 会污染预算检查（max_llm_calls），
+        # 每次 run 前重置，保证每题预算独立。
+        for _attr in ("prompt_tokens", "completion_tokens", "llm_calls"):
+            if hasattr(self.nodes.llm, _attr):
+                setattr(self.nodes.llm, _attr, 0)
         self.nodes.tw = TraceWriter(state["run_id"], trace_dir=self.nodes.trace_dir)
         out = self.graph.invoke(state)
         return {
