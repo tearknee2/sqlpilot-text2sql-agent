@@ -1,0 +1,97 @@
+{
+  "run_id": "0753a4db7a31",
+  "final_status": "success",
+  "answer": "华东大区共有4家门店：上海南京路店、上海徐家汇店、杭州西湖店和杭州滨江店。其中上海南京路店、上海徐家汇店和杭州西湖店为营业中（active），杭州滨江店为已关闭（closed）。",
+  "sql": "SELECT store_id, store_name, city, status FROM stores WHERE region = '华东'",
+  "result": {
+    "columns": [
+      "store_id",
+      "store_name",
+      "city",
+      "status"
+    ],
+    "rows": [
+      [
+        1,
+        "上海南京路店",
+        "上海",
+        "active"
+      ],
+      [
+        2,
+        "上海徐家汇店",
+        "上海",
+        "active"
+      ],
+      [
+        7,
+        "杭州西湖店",
+        "杭州",
+        "active"
+      ],
+      [
+        8,
+        "杭州滨江店",
+        "杭州",
+        "closed"
+      ]
+    ],
+    "row_count": 4,
+    "truncated": false
+  },
+  "failure_reason": null,
+  "metrics": {
+    "retry_count": 0,
+    "step_count": 5,
+    "sql_attempts": 1,
+    "llm_calls": 2,
+    "prompt_tokens": 1096,
+    "completion_tokens": 108,
+    "latency_ms": 0
+  },
+  "trace": [
+    {
+      "step": 1,
+      "node": "retrieve_schema",
+      "ts_ms": 3,
+      "summary": "selected=['stores', 'regions', 'employees', 'orders']",
+      "payload": {},
+      "error": null
+    },
+    {
+      "step": 2,
+      "node": "generate_sql",
+      "ts_ms": 1555,
+      "summary": "attempt=1",
+      "payload": {
+        "sql": "SELECT store_id, store_name, city, status FROM stores WHERE region = '华东'"
+      },
+      "error": null
+    },
+    {
+      "step": 3,
+      "node": "validate_sql",
+      "ts_ms": 1572,
+      "summary": "pass",
+      "payload": {},
+      "error": null
+    },
+    {
+      "step": 4,
+      "node": "execute_sql",
+      "ts_ms": 1574,
+      "summary": "ok=True rows=4 trunc=False",
+      "payload": {},
+      "error": null
+    },
+    {
+      "step": 5,
+      "node": "summarize",
+      "ts_ms": 2527,
+      "summary": "华东大区共有4家门店：上海南京路店、上海徐家汇店、杭州西湖店和杭州滨江店。其中上海南京路店、上海徐家汇店和杭州西湖店为营业中（active），杭州滨江店为已关闭（closed）。",
+      "payload": {},
+      "error": null
+    }
+  ],
+  "created_at": "2026-11-22T02:55:57.690138"
+}
