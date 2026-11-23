@@ -157,7 +157,13 @@ class GraphNodes:
         return out
 
     def refuse(self, state: AgentState) -> dict:
-        reason = state.get("failure_reason") or "UNKNOWN"
+        # 终止型错误(如 QUERY_TIMEOUT)走 give_up 时，错误只写进了 state["error"]，
+        # failure_reason 可能为空；此处兜底从 error.kind 取，避免原因丢失成 UNKNOWN。
+        reason = (
+            state.get("failure_reason")
+            or (state.get("error") or {}).get("kind")
+            or "UNKNOWN"
+        )
         refused = reason in ("SQL_BLOCKED", "NO_SQL", "NO_RELINK", "UNANSWERABLE")
         status = "refused" if refused else "failed"
         if refused:
@@ -166,7 +172,7 @@ class GraphNodes:
             answer = f"查询失败：{reason}"
         step, rec = self._step(state, "refuse", f"{status}:{reason}")
         return {"step_count": step, "final_status": status,
-                "answer": answer, "trace": self._trace(state, rec)}
+                "answer": answer, "failure_reason": reason, "trace": self._trace(state, rec)}
 
     # ---------------------------------------------------------------- routers
     @staticmethod

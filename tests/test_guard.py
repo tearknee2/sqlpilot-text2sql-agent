@@ -144,3 +144,37 @@ def test_unqualified_column():
     assert v.observation is None, "放行时无观测（observation 只在 failed 时产出）"
 
 
+def test_limit_tightened_when_too_large():
+    """LIMIT 收紧（回归 bug）：已有大 LIMIT 时必须被收紧到 max_rows(=200)。
+
+    背景：曾出现 bug —— sqlglot 的 ast.limit() 返回新对象而非原地修改，
+    且已有 limit 时不覆盖，导致"声称收紧(injected=True)但 normalized 原样保留"。
+    """
+    v = guard.validate("SELECT store_id FROM stores LIMIT 500")
+    assert v.passed is True
+    assert v.injected_limit is True, "大 LIMIT 应被收紧，injected 应为 True"
+    assert "LIMIT 200" in v.normalized_sql, f"应收紧为 LIMIT 200，实际: {v.normalized_sql}"
+    assert "LIMIT 500" not in v.normalized_sql, "原大 LIMIT 不应保留"
+
+    # 极端大值也应收紧
+    v2 = guard.validate("SELECT store_id FROM stores LIMIT 2147483647")
+    assert "LIMIT 200" in v2.normalized_sql, f"2147483647 应收紧为 200，实际: {v2.normalized_sql}"
+
+
+def test_limit_added_when_absent():
+    """LIMIT 注入（回归 bug）：无 LIMIT 时必须自动补上 max_rows(=200)。"""
+    v = guard.validate("SELECT store_id FROM stores")
+    assert v.passed is True
+    assert v.injected_limit is True, "无 LIMIT 应注入，injected 应为 True"
+    assert "LIMIT 200" in v.normalized_sql, f"应补 LIMIT 200，实际: {v.normalized_sql}"
+
+
+def test_limit_kept_when_smaller():
+    """小 LIMIT 不动：已有限制 <= max_rows 时保持原值，不放大也不重复。"""
+    v = guard.validate("SELECT store_id FROM stores LIMIT 3")
+    assert v.passed is True
+    assert v.injected_limit is False, "<=max_rows 不应被改动"
+    assert "LIMIT 3" in v.normalized_sql, f"应保持 LIMIT 3，实际: {v.normalized_sql}"
+    assert "LIMIT 200" not in v.normalized_sql, "不该被放大成 200"
+
+

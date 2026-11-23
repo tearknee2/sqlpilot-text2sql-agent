@@ -49,18 +49,23 @@ def _has_comment_outside_literals(sql: str) -> bool:
     return False
 
 
-def _ensure_limit(ast: exp.Select, max_rows: int) -> bool:
-    """Tighten existing LIMIT or add one. Return True if we changed anything."""
+def _ensure_limit(ast: exp.Select, max_rows: int) -> tuple[exp.Select, bool]:
+    """Tighten existing LIMIT or add one. Return (new_ast, changed).
+
+    注意：sqlglot 的 ast.limit() 返回【新对象】而非原地修改，
+    且已有 limit 时不覆盖旧值。故需先清空旧 limit 再设置，并用返回的新对象。
+    """
     existing = ast.args.get("limit")
     if existing is not None:
         try:
             n = int(existing.expression.name)
             if n <= max_rows:
-                return False
+                return ast, False
         except Exception:
             pass
-    ast.limit(max_rows)
-    return True
+    ast.set("limit", None)
+    new_ast = ast.limit(max_rows)
+    return new_ast, True
 
 
 class SqlGuard:
@@ -149,7 +154,7 @@ class SqlGuard:
                 )
 
         # 5) tighten LIMIT, emit zero-comment normalized SQL
-        injected = _ensure_limit(ast, self.max_rows)
+        ast, injected = _ensure_limit(ast, self.max_rows)
         return SqlValidation(
             passed=True,
             normalized_sql=ast.sql(dialect="mysql"),
