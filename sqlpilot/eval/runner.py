@@ -250,7 +250,7 @@ def cmd_run(args) -> int:
         graph = QueryGraph(llm=llm)
 
 
-    ex = MySqlExecutor()
+    ex = MySqlExecutor() if not args.stress else None
 
     # Step 4: 逐题跑
     results = []
@@ -307,7 +307,7 @@ def cmd_run(args) -> int:
         # ===== 压力集：统计"触发率"（retry_count>0 的题数）=====
         triggered_count = sum(1 for r in results if r["triggered"])
         trigger_rate = triggered_count / total if total else 0.0
-        print(f"\n=== 压力集汇总 ===")
+        print("\n=== 压力集汇总 ===")
         print(f"总题数: {total}  触发纠错的题数: {triggered_count}  触发率: {trigger_rate:.1%}")
         print("逐题 trigger 情况:")
         for r in results:
