@@ -1,0 +1,35 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	retrieve_schema(retrieve_schema)
+	generate_sql(generate_sql)
+	validate_sql(validate_sql)
+	check_budget(check_budget)
+	reflect(reflect)
+	execute_sql(execute_sql)
+	summarize(summarize)
+	refuse(refuse)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> retrieve_schema;
+	check_budget -.-> reflect;
+	check_budget -.-> refuse;
+	execute_sql -. &nbsp;retry&nbsp; .-> check_budget;
+	execute_sql -. &nbsp;give_up&nbsp; .-> refuse;
+	execute_sql -. &nbsp;success&nbsp; .-> summarize;
+	generate_sql -. &nbsp;empty&nbsp; .-> refuse;
+	generate_sql -. &nbsp;ok&nbsp; .-> validate_sql;
+	reflect -. &nbsp;regenerate&nbsp; .-> generate_sql;
+	reflect -. &nbsp;relink&nbsp; .-> retrieve_schema;
+	retrieve_schema --> generate_sql;
+	validate_sql -. &nbsp;recover&nbsp; .-> check_budget;
+	validate_sql -. &nbsp;pass&nbsp; .-> execute_sql;
+	validate_sql -. &nbsp;block&nbsp; .-> refuse;
+	refuse --> __end__;
+	summarize --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

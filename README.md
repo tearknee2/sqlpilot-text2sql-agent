@@ -46,7 +46,7 @@ docker compose up -d --build
 - **reflect 之后的分支**：若需重新检索（如列/表名错）则回到 `retrieve_schema`（relink）；否则直接回到 `generate_sql`（regenerate）
 - **终止**：SQL 不安全(block) / 无 SQL / 超预算 → `refuse`
 
-> ⚠️ `web/graph.png` 由 LangGraph 自动导出，可能未完整渲染 `route_reflect` 的 relink/regenerate 两条分支；**完整拓扑以 `sqlpilot/agent/graph.py` 为准**。
+> 上图由 LangGraph 自动导出（`script/export_graph.py`），完整展示了所有路由分支：`validate_sql` 的 pass/recover/block、`execute_sql` 的 retry/give_up/success、`reflect` 的 relink/regenerate、`check_budget` 的 reflect/refuse。源码以 `sqlpilot/agent/graph.py` 为准。
 
 **错误分类（以代码 `agent/errors.py` 为准）**：
 - **可恢复（触发纠错重试）**：`UNKNOWN_COLUMN`、`UNKNOWN_TABLE`、`TYPE_MISMATCH`、`SYNTAX`、`OTHER`
