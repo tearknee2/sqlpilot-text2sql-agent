@@ -87,7 +87,7 @@ for raw in st.session_state.history:
     sql = raw.get("sql")
     if sql:
         st.markdown("**生成的 SQL**")
-        st.code(sql, language="sql")
+        st.code(sql, language="sql", wrap_lines=True)
 
     exec_res = raw.get("result")
     if exec_res and exec_res.get("rows") is not None:
