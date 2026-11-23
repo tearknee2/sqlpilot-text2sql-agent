@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class QueryOptions(BaseModel):
-    max_retries: int | None = Field(default=None, ge=0, le=2)
+    # 注：max_retries 曾被定义但从未消费（重试次数由 settings.agent_max_retries 全局控制），
+    # 为避免"看似可传实则无效"的坑，已移除。
     include_trace: bool = True
 
 

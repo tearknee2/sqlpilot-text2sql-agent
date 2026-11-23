@@ -1,7 +1,7 @@
 """LLM prompts (doc appendix C). PROMPT_VERSION is recorded in eval reports."""
 from __future__ import annotations
 
-PROMPT_VERSION = "v2.0"
+PROMPT_VERSION = "v2.0-final"
 
 GEN_SQL_SYSTEM = """你是 MySQL 8 数据分析师。严格规则：
 1. 只能使用 <schema> 中出现过的表名与列名，禁止编造。

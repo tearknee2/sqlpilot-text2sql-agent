@@ -157,13 +157,14 @@ def write_report(results, cases, args, out_path: Path) -> None:
     from sqlpilot.config import get_settings
     s = get_settings()
     model_name = s.llm_model          # 提示：Settings 里哪个字段是模型名？
+    from sqlpilot.agent.prompts import PROMPT_VERSION
 
     # 4) 拼 markdown
     md = f"""# SQLPilot 评测报告
 
 > 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 > split：`{args.split}`
-> model：`{model_name}` ／ PROMPT_VERSION：`v2.0-final` ／ dataset_sha256：`{sha[:16]}...`
+> model：`{model_name}` ／ PROMPT_VERSION：`{PROMPT_VERSION}` ／ dataset_sha256：`{sha[:16]}...`
 > **小样本声明**：当前 {total} 道可评分题（目标 24，D8 补齐）；1 题 ≈ {one_case_pp:.1f}pp；不做显著性检验，结论以逐题矩阵为准。
 
 ## 一、执行准确率

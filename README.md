@@ -158,7 +158,9 @@ tests/          # 单测 + 纠错链路冒烟测试
 eval/           # 评测报告产物 (report.md 等)
 ```
 
-**实验复现信息**：模型 `deepseek-chat`(temperature=0) / 压力集 `qwen2.5-coder:7b`(本地 Ollama) / 数据库 MySQL 8.0 / 数据集哈希 `ab9c1143...c65bb0` / commit 见仓库历史。
+**实验复现信息**：模型 `deepseek-chat`(temperature=0) / 压力集 `qwen2.5-coder:7b`(本地 Ollama) / 数据库 MySQL 8.0 / 数据集哈希 `ab9c1143...c65bb0` / PROMPT_VERSION `v2.0-final` / commit 见仓库历史。
+
+**区间复现**：`python eval/run_ablation.py --runs 10` 会循环跑 10 次并打印每组的平均准确率与观察范围（最低~最高）。LLM 有生成抖动，单次结果不完全可复现，故报告多次运行的观察范围而非精确值。
 
 ---
 
